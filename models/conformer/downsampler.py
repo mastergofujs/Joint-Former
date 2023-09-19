@@ -3,7 +3,7 @@ from torch import nn
 from models.conformer.attention import PositionalEncoding, RelMultiHeadAttn
 from models.conformer.convolution import ConvolutionModule
 from models.conformer.macaron_feed_forward import MacaronFeedForward
-
+from fvcore.nn import FlopCountAnalysis
 
 class GLU(nn.Module):
     def __init__(self, input_num):
@@ -68,23 +68,25 @@ class CNN(nn.Module):
         batch_norm = True
         for i in range(len(nb_filters)):
             conv(i, batch_norm, conv_dropout, activ=activation)
-            cnn.add_module("pooling{0}".format(i), nn.AvgPool2d(pooling[i]))  # bs x tframe x mels
-
+            if i < len(nb_filters) -1:
+                cnn.add_module("pooling{0}".format(i), nn.AvgPool2d(pooling[i]))  # bs x tframe x mels
+        self.gap = torch.nn.AdaptiveAvgPool2d(1)
         self.cnn = cnn
 
     def forward(self, x):
         # input size : (batch_size, n_channels, n_frames, n_freq)
         # conv features
         x = self.cnn(x)
+        x = self.gap(x)
         return x
 
 
-class CNNDownsamplerBlock(torch.nn.Module):
+class CNNLocalDownsampler(torch.nn.Module):
     def __init__(self, patchsize=8, **cnn_kwargs):
-        super(CNNDownsamplerBlock, self).__init__()
+        super(CNNLocalDownsampler, self).__init__()
         self.patchsize = patchsize
         self.cnn = CNN(**cnn_kwargs)
-
+        
     def temporal_patchifying(self, input):
         b, nf, d = input.squeeze(1).size()
         npatchs = nf // self.patchsize
@@ -101,12 +103,39 @@ class CNNDownsamplerBlock(torch.nn.Module):
         return unmasked_patchs, masked_inds, unmasked_inds
 
     def forward(self, x, mask=False, **mask_kwargs):
+        # x = x.repeat(1, 1, 2, 1)
         x = self.temporal_patchifying(x)
         if mask:
             x, masked_inds, unmasked_inds = self.patch_masking(x, **mask_kwargs)
         b, p, c, t, d = x.size() # batch size, p
-        x = self.cnn(x.view(b * p, c, t, d))
+        x = x.view(b * p, c, t, d)
+        # flops = FlopCountAnalysis(self.cnn, x)
+        x = self.cnn(x)
         x = x.view(b, p, -1)
+        if mask:
+            return x, masked_inds, unmasked_inds
+        else:
+            return x
+
+class CNNDownsamplerWithMask(torch.nn.Module):
+    def __init__(self, patchsize=8, **cnn_kwargs):
+        super(CNNDownsamplerWithMask, self).__init__()
+        self.patchsize = patchsize
+        self.cnn = CNN(**cnn_kwargs)
+
+    def patch_masking(self, x, mask_size=1, mask_ratio=0.75):
+        b, nf, d = x.size()
+        shuffled_ind = torch.randperm(nf)
+        masked_inds = shuffled_ind[:int(mask_ratio * nf)]
+        unmasked_inds = shuffled_ind[int(mask_ratio * nf):]
+        unmasked_patchs = x[:, unmasked_inds, :]
+        return unmasked_patchs, masked_inds, unmasked_inds
+
+    def forward(self, x, mask=False, **mask_kwargs):
+        x = self.cnn(x)
+        x = x.permute((0, 2, 1, 3)).squeeze()
+        if mask:
+            x, masked_inds, unmasked_inds = self.patch_masking(x, **mask_kwargs)
         if mask:
             return x, masked_inds, unmasked_inds
         else:
