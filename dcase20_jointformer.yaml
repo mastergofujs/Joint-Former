@@ -1,0 +1,140 @@
+# ====== Feature extraction setting ======
+feature:
+  audio_root: /data0/gaolj/sed_data/DCASE2020/audio
+  feat_root: /data0/gaolj/sed_data/DCASE2020/features
+  sample_rate: 16000
+  gain: -3
+  highpass: 10
+  mel_spec:
+    n_mels: 64
+    n_fft: 1024
+    hop_size: 323
+# ========================================
+
+
+# ====== Model architecture setting ======
+model:
+# CNN setting
+  cnn:
+    activation: "Relu"
+    conv_dropout: 0.1
+    kernel_size: [3, 3, 3, 3]
+    padding: [1, 1, 1, 1]
+    stride: [1, 1, 1, 1]
+    nb_filters: [16, 32, 64, 128]
+    pooling: [[2, 4], [2, 2], [2, 2], [1, 2]]
+    patchsize: 8
+
+
+  # Transformer/Conformer setting
+  encoder_type: Conformer
+
+  encoder:
+    adim: 144
+    aheads: 4
+    dropout_rate: 0.1
+    elayers: 3
+    eunits: 576
+    kernel_size: 7
+
+  decoder:
+    idim: 144
+    adim: 144
+    fdim: 64
+    aheads: 4
+    dropout_rate: 0.1
+    elayers: 2
+    eunits: 256
+    kernel_size: 7
+    cnn_upsampler:
+      activation: "Relu"
+      conv_dropout: 0.1
+      kernel_size: [2, 2, 2]
+      padding: [0, 0, 0]
+      stride: [2, 2, 2]
+      nb_filters: [128, 128, 64]
+
+  mask:
+    mask_size: 1
+    mask_ratio: 0.5
+  
+
+# ========================================
+
+
+# ====== Experiment setting ======
+# experiment
+wandb_project: semi_sed@ljgao
+exp_name: 20_joint_former_final
+resume:
+pretrained:
+
+# dataset
+synth_meta: /data0/gaolj/sed_data/DCASE2020/metadata/train/synthetic.tsv
+weak_meta: /data0/gaolj/sed_data/DCASE2020/metadata/train/weak.tsv
+unlabel_meta: /data0/gaolj/sed_data/DCASE2020/metadata/train/unlabel_in_domain.tsv
+valid_meta: /data0/gaolj/sed_data/DCASE2020/metadata/validation/validation.tsv
+
+valid_audio_dir: /data0/gaolj/sed_data/DCASE2020/audio/validation/validation
+max_len_seconds: 10
+pooling_time_ratio: 8
+
+# data augmentation
+norm_mode: gcmvn
+apply_prob: 0.5
+data_aug:
+  semi_supervised_training: True
+  time_shift:
+    apply: True
+    params:
+      mean: 0
+      std: 90
+  frequency_shift:
+    apply: False
+    params:
+      mean: 0
+      std: 3
+  frequency_mask:
+    apply: False
+    params:
+      num_masks: 1
+      mask_param: 100
+  add_noise:
+    apply: False
+    params:
+      mean: 0.0
+      std: 0.01
+      snr: 30
+
+# training
+seed: 1
+ngpu: 1
+batch_size: 32
+num_workers: 8
+optimizer: "RAdam"
+optimizer_params:
+  lr: 0.001
+  betas: [0.9, 0.98]
+  eps: 0.000000001
+  weight_decay: 0.000001
+
+scheduler: "StepLR"
+scheduler_params:
+  step_size: 10000
+  gamma: 0.1
+
+trainer_options:
+  accum_grad: 1
+  grad_clip: 5.0
+  log_interval: 250
+  train_steps: 30000
+  rampup_length: 6000
+  consistency_cost: 2.5
+  reconstruction_cost: 0.3
+  use_mixup: True
+  binarization_type: "global_threshold"
+  threshold: 0.5
+  early_stopping: False
+  patience: 20
+  withlogits: True
+# ===============================
